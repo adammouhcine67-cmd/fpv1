@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RC FPV Link</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #14171c;
+    --accent: #ff5a2a;
+    --accent-2: #2affd0;
+    --text: #eef1f5;
+    --muted: #8b93a0;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    overscroll-behavior: none;
+  }
+  #app { height: 100%; display: flex; flex-direction: column; }
+
+  .landing {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 20px; padding: 24px;
+    text-align: center;
+  }
+  .landing h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: 0.5px; }
+  .landing p { color: var(--muted); margin: 0; font-size: 14px; max-width: 320px; }
+  .mode-buttons { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 320px; margin-top: 12px; }
+  button.big {
+    padding: 16px; border-radius: 12px; border: none;
+    font-size: 16px; font-weight: 600; cursor: pointer;
+    background: var(--panel); color: var(--text);
+    border: 1px solid #262b33;
+  }
+  button.big.primary { background: var(--accent); color: #1a0b05; }
+  button.big.secondary { background: var(--accent-2); color: #06231d; }
+
+  .room-row { display: flex; gap: 8px; width: 100%; max-width: 320px; }
+  input[type=text] {
+    flex: 1; padding: 14px; border-radius: 10px; border: 1px solid #262b33;
+    background: var(--panel); color: var(--text); font-size: 16px;
+  }
+
+  .video-wrap { flex: 1; position: relative; background: #000; overflow: hidden; }
+  video { width: 100%; height: 100%; object-fit: cover; display: block; background: #000; }
+
+  .hud {
+    position: absolute; top: 0; left: 0; right: 0;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: calc(10px + env(safe-area-inset-top)) 14px 10px;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.55), transparent);
+    pointer-events: none;
+  }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(20,23,28,0.75); border: 1px solid rgba(255,255,255,0.12);
+    padding: 6px 10px; border-radius: 999px; font-size: 12px; color: var(--text);
+    pointer-events: auto;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.live { background: #37e07a; box-shadow: 0 0 8px #37e07a; }
+  .dot.bad { background: #ff5a5a; }
+
+  .bottom-bar {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    display: flex; justify-content: center; gap: 10px;
+    padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
+    background: linear-gradient(to top, rgba(0,0,0,0.6), transparent);
+  }
+  .pill-btn {
+    padding: 10px 16px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.15);
+    background: rgba(20,23,28,0.8); color: var(--text); font-size: 13px; cursor: pointer;
+  }
+  .pill-btn.danger { background: rgba(255,90,42,0.85); border-color: transparent; color: #1a0b05; font-weight: 600; }
+
+  .center-msg {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 14px; text-align: center; padding: 20px; flex-direction: column; gap: 10px;
+  }
+  .spinner {
+    width: 28px; height: 28px; border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.15); border-top-color: var(--accent-2);
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .lag {
+    position: absolute; top: calc(10px + env(safe-area-inset-top)); left: 50%;
+    transform: translateX(-50%); font-size: 11px; color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="landing" id="landing">
+    <h1>RC FPV Link</h1>
+    <p>Mount an iPhone on the car as the camera (Broadcast), then watch the feed live from a second device (Viewer). Both devices must be on the same WiFi network.</p>
+    <div class="room-row">
+      <input type="text" id="roomInput" placeholder="Room code (e.g. car1)" maxlength="24" autocapitalize="off" autocorrect="off" spellcheck="false">
+    </div>
+    <div class="mode-buttons">
+      <button class="big primary" id="btnBroadcast">📷 Broadcast (mount on car)</button>
+      <button class="big secondary" id="btnView">🎮 Viewer (watch feed)</button>
+    </div>
+    <p style="font-size:12px; color:#5a6270;">Both devices must enter the exact same room code.</p>
+  </div>
+
+  <div class="video-wrap" id="videoWrap" style="display:none;">
+    <video id="remoteVideo" autoplay playsinline></video>
+    <video id="localPreview" autoplay playsinline muted style="display:none;"></video>
+    <div class="hud">
+      <div class="badge"><span class="dot" id="statusDot"></span><span id="statusText">Connecting…</span></div>
+      <div class="badge" id="roomBadge"></div>
+    </div>
+    <div class="lag" id="lagText"></div>
+    <div class="center-msg" id="centerMsg" style="display:none;">
+      <div class="spinner"></div>
+      <div id="centerMsgText">Waiting for connection…</div>
+    </div>
+    <div class="bottom-bar">
+      <button class="pill-btn" id="btnSwitchCam" style="display:none;">Flip camera</button>
+      <button class="pill-btn danger" id="btnLeave">End session</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* ==== Filled in for your project (kughalejiydqtseuyrni) ==== */
+const SUPABASE_URL = "https://kughalejiydqtseuyrni.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt1Z2hhbGVqaXlkcXRzZXV5cm5pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2MzY1NTAsImV4cCI6MjA5NjIxMjU1MH0.Eti8hM2qhHJnhaDmzVR0I2K7zOEiK8H2KEBJeWJiLE8";
+/* ============================================================= */
+
+const $ = (id) => document.getElementById(id);
+
+const landing = $("landing");
+const videoWrap = $("videoWrap");
+const roomInput = $("roomInput");
+const btnBroadcast = $("btnBroadcast");
+const btnView = $("btnView");
+const btnLeave = $("btnLeave");
+const btnSwitchCam = $("btnSwitchCam");
+const remoteVideo = $("remoteVideo");
+const localPreview = $("localPreview");
+const statusDot = $("statusDot");
+const statusText = $("statusText");
+const roomBadge = $("roomBadge");
+const centerMsg = $("centerMsg");
+const centerMsgText = $("centerMsgText");
+const lagText = $("lagText");
+
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let pc = null;
+let localStream = null;
+let role = null;
+let roomCode = null;
+let currentFacingMode = "environment";
+let statsTimer = null;
+let dbChannel = null;
+
+const ICE_SERVERS = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" }
+];
+
+function setStatus(text, state) {
+  statusText.textContent = text;
+  statusDot.className = "dot" + (state === "live" ? " live" : state === "bad" ? " bad" : "");
+}
+
+function showCenterMsg(text) {
+  centerMsgText.textContent = text;
+  centerMsg.style.display = "flex";
+}
+function hideCenterMsg() {
+  centerMsg.style.display = "none";
+}
+
+function goToVideoView() {
+  landing.style.display = "none";
+  videoWrap.style.display = "block";
+  roomBadge.textContent = "Room: " + roomCode;
+}
+
+function makePeerConnection() {
+  const conn = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+  conn.onicecandidate = (e) => {
+    if (e.candidate) {
+      sendSignal("ice", { candidate: e.candidate });
+    }
+  };
+
+  conn.onconnectionstatechange = () => {
+    const s = conn.connectionState;
+    if (s === "connected") {
+      setStatus("Live", "live");
+      hideCenterMsg();
+      startStatsLoop(conn);
+    } else if (s === "disconnected" || s === "failed") {
+      setStatus("Connection lost", "bad");
+      showCenterMsg("Connection lost. Restart both devices to reconnect.");
+    } else if (s === "connecting" || s === "new") {
+      setStatus("Connecting…", "connecting");
+    }
+  };
+
+  conn.ontrack = (e) => {
+    remoteVideo.srcObject = e.streams[0];
+    hideCenterMsg();
+  };
+
+  return conn;
+}
+
+function startStatsLoop(conn) {
+  if (statsTimer) clearInterval(statsTimer);
+  statsTimer = setInterval(async () => {
+    try {
+      const stats = await conn.getStats();
+      let rtt = null;
+      stats.forEach((report) => {
+        if (report.type === "candidate-pair" && report.state === "succeeded" && report.currentRoundTripTime != null) {
+          rtt = report.currentRoundTripTime;
+        }
+      });
+      if (rtt != null) lagText.textContent = "~" + Math.round(rtt * 1000) + "ms";
+    } catch (err) {}
+  }, 1500);
+}
+
+async function sendSignal(type, payload) {
+  await supabase.from("fpv_signals").insert({
+    room: roomCode,
+    sender: role,
+    type,
+    payload
+  });
+}
+
+async function handleIncomingRow(row) {
+  if (row.sender === role) return;
+
+  if (row.type === "offer" && role === "viewer") {
+    await pc.setRemoteDescription(new RTCSessionDescription(row.payload.sdp));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    await sendSignal("answer", { sdp: answer });
+  } else if (row.type === "answer" && role === "broadcaster") {
+    await pc.setRemoteDescription(new RTCSessionDescription(row.payload.sdp));
+  } else if (row.type === "ice") {
+    try {
+      await pc.addIceCandidate(row.payload.candidate);
+    } catch (err) {
+      console.warn("ICE candidate error", err);
+    }
+  }
+}
+
+async function subscribeSignaling() {
+  dbChannel = supabase
+    .channel("fpv-room-" + roomCode)
+    .on(
+      "postgres_changes",
+      { event: "INSERT", schema: "public", table: "fpv_signals", filter: "room=eq." + roomCode },
+      (payload) => handleIncomingRow(payload.new)
+    )
+    .subscribe();
+
+  await new Promise((resolve) => setTimeout(resolve, 400));
+}
+
+async function createAndSendOffer() {
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  await sendSignal("offer", { sdp: offer });
+}
+
+async function startBroadcaster() {
+  role = "broadcaster";
+  goToVideoView();
+  remoteVideo.style.display = "none";
+  localPreview.style.display = "block";
+  btnSwitchCam.style.display = "inline-block";
+  showCenterMsg("Starting camera…");
+
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+  } catch (err) {
+    showCenterMsg("Camera access failed: " + err.message);
+    return;
+  }
+
+  localPreview.srcObject = localStream;
+  showCenterMsg("Waiting for viewer to join…");
+
+  pc = makePeerConnection();
+  localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+
+  await subscribeSignaling();
+  await createAndSendOffer();
+}
+
+async function startViewer() {
+  role = "viewer";
+  goToVideoView();
+  showCenterMsg("Connecting to broadcaster…");
+
+  pc = makePeerConnection();
+  await subscribeSignaling();
+
+  const { data } = await supabase
+    .from("fpv_signals")
+    .select("*")
+    .eq("room", roomCode)
+    .eq("type", "offer")
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (data && data.length > 0) {
+    await handleIncomingRow(data[0]);
+  }
+}
+
+async function switchCamera() {
+  if (!localStream) return;
+  currentFacingMode = currentFacingMode === "environment" ? "user" : "environment";
+  const oldTrack = localStream.getVideoTracks()[0];
+  try {
+    const newStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+    const newTrack = newStream.getVideoTracks()[0];
+    const sender = pc.getSenders().find((s) => s.track && s.track.kind === "video");
+    if (sender) await sender.replaceTrack(newTrack);
+    oldTrack.stop();
+    localStream.removeTrack(oldTrack);
+    localStream.addTrack(newTrack);
+    localPreview.srcObject = localStream;
+  } catch (err) {
+    console.warn("Camera switch failed", err);
+  }
+}
+
+function endSession() {
+  if (statsTimer) clearInterval(statsTimer);
+  if (pc) { pc.close(); pc = null; }
+  if (localStream) { localStream.getTracks().forEach((t) => t.stop()); localStream = null; }
+  if (dbChannel) { supabase.removeChannel(dbChannel); dbChannel = null; }
+  landing.style.display = "flex";
+  videoWrap.style.display = "none";
+  lagText.textContent = "";
+  setStatus("Connecting…", "connecting");
+}
+
+btnBroadcast.addEventListener("click", async () => {
+  const code = roomInput.value.trim();
+  if (!code) { alert("Enter a room code first — use the same one on both devices."); return; }
+  roomCode = code;
+  await startBroadcaster();
+});
+
+btnView.addEventListener("click", async () => {
+  const code = roomInput.value.trim();
+  if (!code) { alert("Enter a room code first — use the same one on both devices."); return; }
+  roomCode = code;
+  remoteVideo.style.display = "block";
+  await startViewer();
+});
+
+btnLeave.addEventListener("click", endSession);
+btnSwitchCam.addEventListener("click", switchCamera);
+</script>
+</body>
+</html>
